@@ -1,13 +1,19 @@
 import { useMutation, useQuery } from "react-query";
-import { Button, Table, Modal, Input, Flex } from "@mantine/core";
-import { useState } from "react";
+import { Button, Table, Switch, Group, Textarea } from "@mantine/core";
+import { DatePickerInput } from "@mantine/dates";
+import { useState, useEffect } from "react";
 import { useDisclosure } from "@mantine/hooks";
-
-type TTodo = { text: string; deadline: string; completed: boolean; id: string };
+import { ModalContent } from "./components/modal";
+import { TTodo } from "./types/types";
 
 function App() {
   const [newTodoText, setNewTodoText] = useState<string>(""); // State variable to store the text of the new todo or todotoupdate
-  const [opened, { open, close }] = useDisclosure(false);
+  const [opened, { open,close }] = useDisclosure(false); // modal
+  const [deadLineValue, setDeadLineValue] = useState<[Date | null, Date | null]>([null, null]);
+  const [completionStatus, setCompletionStatus] = useState<Record<string, boolean>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Fetch data
   const { data, isLoading, isError, refetch } = useQuery<TTodo[]>(
     "todos",
     async () => {
@@ -20,50 +26,21 @@ function App() {
       return response.json();
     }
   );
-  if (isLoading) return <div>Loading...</div>;
-  if (isError) return <div>Error fetching todos</div>;
-  const todoList = data!;
 
-
-  // add todo to todos
-  const addTodo = useMutation(
-    (newTodo: TTodo) =>
-      fetch(`https://661a3da6125e9bb9f29b9ac1.mockapi.io/api/v1/todos`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(newTodo),
-      }),
-    {
-      onSuccess: () => {
-        refetch(); // Refresh the todos after adding a new todo
-        setNewTodoText(""); // Clear the input field after adding a new todo
-        close(); // Close the modal after adding a new todo
-      },
+  useEffect(() => {
+    if (data) {
+      // Initialize completionStatus after data is fetched
+      const initialCompletionStatus = data.reduce((acc, todo) => {
+        acc[todo.id] = todo.completed;
+        return acc;
+      }, {} as Record<string, boolean>);
+      setCompletionStatus(initialCompletionStatus);
     }
-  );
+  }, [data]);
 
-  //  get current date of day
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0"); // Adding leading zero if needed
-  const day = String(today.getDate()).padStart(2, "0"); // Adding leading zero if needed
-  const currentDate = `${year}-${month}-${day}`;
+  const todoList = data || [];
 
-  const hendleAddNewTodo = () => {
-    if (newTodoText.trim() !== "") {
-      addTodo.mutate({
-        text: newTodoText,
-        deadline: currentDate,
-        completed: false,
-        id: Math.random().toString(),
-      });
-    }
-  };
-
-  // delete todo from todos
-
+  // Delete todo from todos
   const deleteTodo = useMutation(
     (id: string) =>
       fetch(`https://661a3da6125e9bb9f29b9ac1.mockapi.io/api/v1/todos/${id}`, {
@@ -75,7 +52,8 @@ function App() {
       },
     }
   );
-  const hendelDelete = async (id: string) => {
+
+  const handleDelete = async (id: string) => {
     try {
       await deleteTodo.mutateAsync(id); // Trigger the delete mutation
     } catch (error) {
@@ -83,8 +61,27 @@ function App() {
     }
   };
 
-  // hendelUpdate todo in todos
-  const hendelUpdate = async (id: string) => {
+  // Update completion status of todo item
+  const handleSwitchChange = (id: string, completed: boolean) => {
+    setCompletionStatus((prevStatus) => ({
+      ...prevStatus,
+      [id]: completed,
+    }));
+  };
+
+  // Update todo item text
+  const handleTextChange = (id: string, text: string) => {
+    setEditingId(id);
+    setNewTodoText(text);
+  };
+
+  // Update todo item deadline
+  const handleDeadlineChange = (value: [Date | null, Date | null]) => {
+    setDeadLineValue(value);
+  };
+
+  // Update todo item in todos
+  const handleUpdate = async (id: string) => {
     const todoToUpdate = todoList.find((todo) => todo.id === id);
     if (todoToUpdate) {
       const response = await fetch(
@@ -96,68 +93,86 @@ function App() {
           },
           body: JSON.stringify({
             ...todoToUpdate,
-            text: newTodoText, // Update text with newTodoText
-            deadline: currentDate,
-            completed: true, // Set completed to true
+            text: newTodoText !== "" ? newTodoText : todoToUpdate.text, // Preserve existing text if newTodoText is empty
+            deadline: deadLineValue[0] !== null || deadLineValue[1] !== null ? deadLineValue : todoToUpdate.deadline,
+            completed: completionStatus[id], // Update the completed property based on completionStatus state
           }),
         }
       );
       if (response.ok) {
         refetch(); // Refresh the todos after updating
-        setNewTodoText("")
+        setNewTodoText("");
+        setEditingId(null);
       }
     }
   };
 
+  if (isLoading) return <div>Loading...</div>;
+  if (isError) return <div>Error fetching todos</div>;
 
+  // Define rows for table
 
-  // define rows for table
   const rows = todoList.map((todo: TTodo) => (
     <Table.Tr key={todo.id}>
       <Table.Td>
-        <Input defaultValue={todo.text} onChange={(e)=>setNewTodoText(e.target.value)} 
-         />
+        <Textarea
+          resize="both"
+          placeholder={todo.text}
+          value={editingId === todo.id ? newTodoText : todo.text}
+          onChange={(e) => handleTextChange(todo.id, e.target.value)}
+        />
       </Table.Td>
-      <Table.Td>{todo.deadline}</Table.Td>
-      <Table.Td>{todo.completed ? "true" : "false"}</Table.Td>
       <Table.Td>
-      <Button onClick={() => hendelUpdate(todo.id)}>update</Button>
-        <Button onClick={() => hendelDelete(todo.id)}>delete</Button>
+        <DatePickerInput
+          valueFormat="YYYY/MM/DD"
+          style={{ border: "none" }}
+          type="range"
+          label="Pick dates"
+          placeholder={todo.deadline.toString()}
+          defaultValue={deadLineValue}
+          onChange={handleDeadlineChange}
+        />
+      </Table.Td>
+      <Table.Td>
+        <Group justify="center">
+          <Switch
+            size="xl"
+            onLabel="true"
+            offLabel="false"
+            checked={completionStatus[todo.id]}
+            onChange={(event) => handleSwitchChange(todo.id, event.currentTarget.checked)}
+          />
+        </Group>
+      </Table.Td>
+      <Table.Td>
+        <Button onClick={() => handleUpdate(todo.id)}>update</Button>
+        <Button onClick={() => handleDelete(todo.id)}>delete</Button>
       </Table.Td>
     </Table.Tr>
   ));
 
   return (
     <>
-      <Modal
+      <ModalContent
         opened={opened}
-        onClose={close}
-        title="add todo"
-        centered
-        style={{ marginLeft: "-800px" }}
-      >
-        <Flex>
-          <Input
-            value={newTodoText}
-            onChange={(e) => setNewTodoText(e.target.value)} // Update the new todo text as the user types
-          />
-          
-          <Button onClick={hendleAddNewTodo}>save</Button>
-        </Flex>
-      </Modal>
+        setNewTodoText={setNewTodoText}
+        newTodoText={newTodoText}
+        refetch={refetch}
+        close={close}
+      />
       <Table
         highlightOnHover
         withTableBorder
         withColumnBorders
         verticalSpacing="lg"
         horizontalSpacing="xl"
-        style={{width:window.innerWidth}}
+        style={{ width: window.innerWidth }}
       >
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Text</Table.Th>
             <Table.Th>deadline</Table.Th>
-            <Table.Th>complited</Table.Th>
+            <Table.Th>completed</Table.Th>
             <Table.Th>
               <Button onClick={open}>add new todo</Button> {/* open modal */}
             </Table.Th>
