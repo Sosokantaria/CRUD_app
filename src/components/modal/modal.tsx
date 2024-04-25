@@ -1,33 +1,56 @@
 import { Button, Flex, Modal, Textarea } from "@mantine/core";
-import { useMutation } from "react-query";
+import { QueryClient, useMutation } from "react-query";
 import { TTodo } from "../../types/types";
 import { DatePickerInput } from "@mantine/dates";
 import { useState } from "react";
 
 export function ModalContent({
   setNewTodoText,
-  refetch,
   newTodoText,
   opened,
+  setTodoData,
   close,
 }: any) {
   const [deadLineValue, setDeadLineValue] = useState<
     [Date | null, Date | null]
-  >([null, null]); // add todo to todos
+  >([null, null]);
+  const queryClient = new QueryClient();
+
   const addTodo = useMutation(
-    (newTodo: TTodo) =>
-      fetch(`https://661a3da6125e9bb9f29b9ac1.mockapi.io/api/v1/todos`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(newTodo),
-      }),
+    async (newTodo: TTodo) => {
+      const response = await fetch(
+        `https://661a3da6125e9bb9f29b9ac1.mockapi.io/api/v1/todos`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(newTodo),
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Failed to add todo");
+      }
+      return await response.json(); 
+    },
     {
-      onSuccess: () => {
-        refetch(); // Refresh the todos after adding a new todo
+      onSuccess: (data: TTodo) => {
+        // Update the cached data after adding
+        queryClient.setQueryData<TTodo[] | undefined>("todos", (prevData) => {
+          return prevData ? [...prevData, data] : [data];
+        });
+        setTodoData((prev: TTodo[] | undefined) => {
+          if (prev) {
+            return [...prev, data];
+          } else {
+            return [data];
+          }
+        });
         setNewTodoText(""); // Clear the input field after adding a new todo
         close(); // Close the modal after adding a new todo
+      },
+      onSettled: () => {
+        queryClient.invalidateQueries("todos"); // Manually update cache after adding a new todo
       },
     }
   );
@@ -69,10 +92,10 @@ export function ModalContent({
           resize="both"
           placeholder="enter text"
           value={newTodoText}
-          onChange={(e) => setNewTodoText(e.target.value)} // Update the new todo text as the user types
+          onChange={(e) => setNewTodoText(e.target.value)} 
         />
         <DatePickerInput
-          valueFormat="YYYY-MM-DD "
+          valueFormat="YYYY-MM-DD"
           type="range"
           placeholder="Pick dates"
           defaultValue={deadLineValue}
